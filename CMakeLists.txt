@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(SOURCES
     src/main.cpp
     src/socket_manager.cpp
+    src/packet_parser.cpp
+    src/packet_structure.cpp
 )
 
 # Include directories
