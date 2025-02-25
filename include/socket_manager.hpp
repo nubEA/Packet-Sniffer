@@ -11,15 +11,17 @@
 #include <net/if.h>     // For struct ifreq (interface request)
 #include <arpa/inet.h>  // For inet_ntoa()
 #include <linux/if_packet.h> // For sockaddr_ll (packet socket addressing)
+#include <stdexcept>        //For std::runtime_error
+#include <iostream>
 
 class SocketManager {
 public:
-    explicit SocketManager(const std::string& interface);
+    explicit SocketManager(std::string& interface);
     ~SocketManager();
 
-    bool openSocket();  // Opens a raw socket
-    int capturePacket(uint8_t* buffer, size_t buffer_size);  // Captures a raw packet
-    void closeSocket(); // Closes the socket
+    bool open_socket();  // Opens a raw socket
+    int capture_packet(uint8_t* buffer, size_t buffer_size);  // Captures a raw packet
+    bool set_promisc_mode();    //Set promiscous mode on
 
 private:
     int sockfd;         // File descriptor for the socket
