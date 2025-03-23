@@ -6,6 +6,7 @@ SocketManager::SocketManager(std::string& interfaceName)
     iface = interfaceName;
 
     if(!open_socket()) throw std::runtime_error("Error in opening and setting up the socket");
+
 }
 
 SocketManager::~SocketManager(){
@@ -70,12 +71,12 @@ bool SocketManager::set_promisc_mode()
     return true;
 }
 
-int SocketManager::capture_packet(uint8_t* buffer, size_t buffer_size){
+int SocketManager::capture_packet(std::vector<char>& buffer, size_t buffer_size){
     //We pass in sockaddr to get metadata/info about the sender like MAC addr in this case (since using _ll, if we used _in we get IP etc)
     struct sockaddr_ll sockaddr{};
     socklen_t len = sizeof(sockaddr);
 
-    int bytesReceived = recvfrom(sockfd,buffer,buffer_size,0,(struct sockaddr*)&sockaddr,&len);
+    int bytesReceived = recvfrom(sockfd,buffer.data(),buffer_size,0,(struct sockaddr*)&sockaddr,&len);
     if(bytesReceived == -1) std::cout << "Error receving packets\n";
 
     return bytesReceived;

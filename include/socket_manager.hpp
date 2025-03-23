@@ -13,6 +13,7 @@
 #include <linux/if_packet.h> // For sockaddr_ll (packet socket addressing)
 #include <stdexcept>        //For std::runtime_error
 #include <iostream>
+#include <vector>
 
 class SocketManager {
 public:
@@ -20,7 +21,7 @@ public:
     ~SocketManager();
 
     bool open_socket();  // Opens a raw socket
-    int capture_packet(uint8_t* buffer, size_t buffer_size);  // Captures a raw packet
+    int capture_packet(std::vector<char>& buffer, size_t buffer_size);  // Captures a raw packet
     bool set_promisc_mode();    //Set promiscous mode on
 
 private:
