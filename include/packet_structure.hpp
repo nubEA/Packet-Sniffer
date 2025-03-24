@@ -21,6 +21,17 @@ class Packet{
             RARP = 0x8035,   // Reverse Address Resolution Protocol
             UNKNOWN = 0xFFFF 
         };
+
+        enum class IpProtocol : uint8_t {
+            ICMP = 1,       // Internet Control Message Protocol
+            TCP = 6,        // Transmission Control Protocol
+            UDP = 17,       // User Datagram Protocol
+            //IPv6 Specific
+            ICMPv6 = 58,    // ICMP for IPv6
+            AH = 51,        // Authentication Header
+            NO_NEXT_HEADER = 59, // No next header
+            UNKNOWN = 0xFF
+        };
         // Ethernet Frame Structure
         struct EthernetFrame {
             std::array<unsigned char,6> dest_mac;
@@ -72,40 +83,33 @@ class Packet{
             uint16_t checksum;
         };
 
-        struct ICMPHeader {
-            uint8_t type;
-            uint8_t code;
-            uint16_t checksum;
-            // Additional fields depending on type
-        };
-
         std::variant<IPv4Header, IPv6Header> OriginalIpHeader;
         // ICMP Echo Request/Reply Structure
         struct ICMPEcho {
             uint16_t identifier;       // Identifier (used for matching requests/replies)
             uint16_t sequenceNumber;   // Sequence number (used for matching requests/replies)
-            std::vector<uint8_t> payload; // Optional data (e.g., ping payload)
+            // std::vector<uint8_t> payload; // Optional data (e.g., ping payload)
         };
 
         // ICMP Destination Unreachable Structure
         struct ICMPDestinationUnreachable {
             uint32_t unused;                     // 4 bytes of unused data
             std::variant<IPv4Header, IPv6Header> OriginalIpHeader; // Original IP header (IPv4 or IPv6)
-            std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
+            // std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
         };
 
         // ICMP Time Exceeded Structure
         struct ICMPTimeExceeded {
             uint32_t unused;                     // 4 bytes of unused data
             std::variant<IPv4Header, IPv6Header> OriginalIpHeader; // Original IP header (IPv4 or IPv6)
-            std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
+            // std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
         };
 
         // ICMP Redirect Structure
         struct ICMPRedirect {
             uint32_t gatewayAddress;             // Address of the gateway to which traffic should be sent
             std::variant<IPv4Header, IPv6Header> OriginalIpHeader; // Original IP header (IPv4 or IPv6)
-            std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
+            // std::array<uint8_t, 8> originalPayload; // First 8 bytes of the original packet's payload
         };
 
         // ICMP Timestamp Request/Reply Structure
@@ -124,9 +128,91 @@ class Packet{
             uint32_t addressMask;      // Subnet mask
         };
 
-        // std::variant to handle different ICMP types
-        std::variant<ICMPEcho, ICMPDestinationUnreachable, ICMPTimeExceeded, ICMPRedirect, ICMPTimestamp, ICMPAddressMask> icmpData;
+        struct ICMPv6Echo {
+            uint16_t id;
+            uint16_t sequence_num;
+        };
+        
+        struct ICMPv6DestUnreachable {
+            uint32_t unused;
+            std::vector<uint8_t> payload;
+        };
+        
+        struct ICMPv6PacketTooBig {
+            uint32_t mtu;
+            std::vector<uint8_t> payload;
+        };
+        
+        struct ICMPv6TimeExceeded {
+            uint32_t unused;
+            std::vector<uint8_t> payload;
+        };
+        
+        struct ICMPv6ParamProblem {
+            uint32_t pointer;
+            std::vector<uint8_t> payload;
+        };
+        
+        struct ICMPv6NeighborSolicit {
+            uint32_t reserved;
+            std::array<uint8_t, 16> target_addr;
+        };
+        
+        struct ICMPv6NeighborAdvert {
+            uint32_t flags;
+            std::array<uint8_t, 16> target_addr;
+        };
+        
+        struct ICMPv6RouterSolicit {
+            uint32_t reserved;
+        };
+        
+        struct ICMPv6RouterAdvert {
+            uint8_t hop_limit;
+            uint8_t flags;
+            uint16_t router_lifetime;
+            uint32_t reachable_time;
+            uint32_t retransmit_time;
+        };
+        
+        struct ICMPv6Generic {
+            uint32_t rest;
+            std::vector<uint8_t> payload;
+        };
+        
+        // ICMP Generic struct for unrecognised data
+        struct ICMPGeneric{
+            uint32_t rest_of_header;
+            std::vector<uint8_t> payload;
+        };
 
+        // std::variant to handle different ICMP types
+
+        struct ICMPHeader {
+            uint8_t type;
+            uint8_t code;
+            uint16_t checksum;
+            std::variant<
+                ICMPEcho,
+                ICMPDestinationUnreachable,
+                ICMPTimeExceeded,
+                ICMPRedirect,
+                ICMPTimestamp,
+                ICMPAddressMask,
+                ICMPGeneric,
+                ICMPv6Echo,
+                ICMPv6DestUnreachable,
+                ICMPv6PacketTooBig,
+                ICMPv6TimeExceeded,
+                ICMPv6ParamProblem,
+                ICMPv6NeighborSolicit,
+                ICMPv6NeighborAdvert,
+                ICMPv6RouterSolicit,
+                ICMPv6RouterAdvert,
+                ICMPv6Generic
+            > icmpData;
+        };
+        
         struct HTTPHeader {
             std::string method;     // GET, POST, etc.
             std::string path;       // URL path
@@ -142,6 +228,8 @@ class Packet{
         struct TCPHeader tcpHeader{};
         struct UDPHeader udpHeader{};
         struct ICMPHeader icmpHeader{};
+        
+        IpProtocol ip_protocol{IpProtocol::UNKNOWN};
 
         std::vector<char> payload;
         uint32_t timestamp;
