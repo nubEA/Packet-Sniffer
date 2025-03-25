@@ -23,6 +23,13 @@ class Packet{
         };
 
         enum class IpProtocol : uint8_t {
+            //Extention Headers
+            HOP_BY_HOP = 0, // Hop-by-Hop Option header
+            ROUTING = 43,   // Routing header
+            FRAGMENT = 44,  // Fragment header
+            ENCAPSULATING_SECURITY_PAYLOAD = 50, // Encapsulating Security Payload header
+            DESTINATION_OPTIONS = 60, // Destination Options header
+            //Transport Layer Specific
             ICMP = 1,       // Internet Control Message Protocol
             TCP = 6,        // Transmission Control Protocol
             UDP = 17,       // User Datagram Protocol

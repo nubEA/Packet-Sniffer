@@ -5,6 +5,9 @@
 #include <vector>
 #include <cstdint>
 #include <stdexcept>
+#include <iostream>
+#include <set>
+#include <unordered_set>
 #include "packet_structure.hpp"
 #include <sstream>
 #include <iostream>
@@ -73,7 +76,10 @@ private:
     static void parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet);
 
     // Maps a raw IP protocol value to the Packet::IpProtocol enum
-    static Packet::IpProtocol get_ip_protocol(const uint8_t protocol);
+    static Packet::IpProtocol get_ip_protocol(const uint8_t& protocol);
+
+    // Parses the ICMPv6 header and updates the Packet object
+    static bool is_extension_header(const uint8_t& header);
 
 };
 
