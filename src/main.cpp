@@ -26,7 +26,6 @@ int main(int argc, char* argv[]){
         if(bytesReceived > 0)
         {
             Packet packet = PacketParser::parse_packet(buffer,bytesReceived);
-            //display packet
         }
 
     }   
