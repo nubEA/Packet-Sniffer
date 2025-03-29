@@ -48,7 +48,7 @@ class Packet{
 
         // IPv4 Header Structure
         struct IPv4Header {
-            uint8_t version_ihl;
+            uint8_t version_ihl;    //Tells the size of the ipv4 header
             uint8_t tos;
             uint16_t total_length;
             uint16_t identification;
@@ -60,6 +60,7 @@ class Packet{
             uint32_t dest_ip;
         };
 
+        //Size is always fixed (40 bytes)
         struct IPv6Header{
             uint8_t version;
             uint8_t traffic_class;
@@ -71,6 +72,7 @@ class Packet{
             std::array<uint8_t, 16> des_ip;
         };
 
+        //Size varies from 20 bytes to 60 bytes
         struct TCPHeader {
             uint16_t srcPort;
             uint16_t destPort;
@@ -83,6 +85,7 @@ class Packet{
             uint16_t urgentPointer;
         };
 
+        // fixed size of 8 bytes
         struct UDPHeader {
             uint16_t srcPort;
             uint16_t destPort;
@@ -91,7 +94,15 @@ class Packet{
         };
 
         std::variant<IPv4Header, IPv6Header> OriginalIpHeader;
+
+        // Error Message Payloads: For error types (Dest Unreachable, Time Exceeded) and Redirects, the RFCs state the "payload" should contain the original IP header + the first 8 bytes of the datagram that caused the error. 
+
+        //Your current code stores the OriginalIpHeader variant, which is great. 
+        
+        //You chose to omit extracting those extra 8 bytes, which is a valid simplification, but be ready to explain that the standard does include them and why they are useful (identifying the original flow via port numbers).
+
         // ICMP Echo Request/Reply Structure
+
         struct ICMPEcho {
             uint16_t identifier;       // Identifier (used for matching requests/replies)
             uint16_t sequenceNumber;   // Sequence number (used for matching requests/replies)
@@ -239,12 +250,15 @@ class Packet{
         IpProtocol ip_protocol{IpProtocol::UNKNOWN};
 
         std::vector<char> payload;
+        size_t payloadLength;
         uint32_t timestamp;
         uint16_t packet_len;
+        size_t ipv6HeaderEndOffset = 14 + 40; // 14 bytes for Ethernet header + 40 bytes for IPv6 header
+        size_t ipv4HeaderEndOffset = 14 + 20; // 14 bytes for Ethernet header + 20 bytes for IPv4 header
         
         const std::string get_mac_string(const std::array<unsigned char,6>& mac) const;
         const std::string get_ipv4_string(const uint32_t ip) const;
         const std::string get_ipv6_string(const std::array<uint8_t, 16>& ip) const;
 };
 
-#endif // PACKET_STRUCTURE_HPP
+#endif 

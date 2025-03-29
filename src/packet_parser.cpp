@@ -24,6 +24,7 @@ Packet PacketParser::parse_packet(const std::vector<char>& data, size_t length) 
             // Ensure the packet is long enough to contain the IPv4 header
             if (length >= VALID_ETHER_LEN + VALID_IPV4_LEN) {
                 parse_ipv4(data, length, packet);
+                parse_transport_layer_headers(data, length, packet);
             }
             break;
 
@@ -31,6 +32,7 @@ Packet PacketParser::parse_packet(const std::vector<char>& data, size_t length) 
             // Ensure the packet is long enough to contain the IPv6 header
             if (length >= VALID_ETHER_LEN + VALID_IPV6_LEN) {
                 parse_ipv6(data, length, packet);
+                parse_transport_layer_headers(data, length, packet);
             }
             break;
 
@@ -41,7 +43,11 @@ Packet PacketParser::parse_packet(const std::vector<char>& data, size_t length) 
                       << std::endl;
             break;
     }
+    return packet;
+}
 
+void PacketParser::parse_transport_layer_headers(const std::vector<char>& data, size_t length, Packet& packet)
+{
     // Determine the IP protocol and parse accordingly
     switch(packet.ip_protocol){
         case Packet::IpProtocol::TCP:
@@ -60,9 +66,7 @@ Packet PacketParser::parse_packet(const std::vector<char>& data, size_t length) 
             // Log unsupported IP protocol for debugging purposes
             std::cerr << "Unsupported or unhandled IP Protocol: " << static_cast<uint8_t>(packet.ip_protocol) << std::endl;
             break;
-    }
-
-    return packet;
+        }
 }
 
 void PacketParser::parse_ether_header(const std::vector<char>& data, size_t length, Packet& packet) {
@@ -76,12 +80,16 @@ void PacketParser::parse_ether_header(const std::vector<char>& data, size_t leng
     std::copy(data.begin() + 6, data.begin() + 12, packet.ethFrame.src_mac.begin());
 
     // Extract the EtherType field (big-endian to host byte order)
-    uint16_t etherType = (static_cast<uint8_t>(data[12]) << 8) | static_cast<uint8_t>(data[13]);
+    uint16_t etherType = ntohs(reinterpret_cast<const uint16_t*>(data.data() + 12)[0]);
+    
     assign_ether_type(etherType, packet.ethFrame.ethertype);
 }
 
 void PacketParser::parse_ipv4(const std::vector<char>& data, size_t length, Packet& packet) {
     size_t ipv4_offset = VALID_ETHER_LEN;
+
+    size_t ipHeaderLengthBytes = (packet.ipv4Header.version_ihl & 0x0F) * 4; 
+    packet.ipv4HeaderEndOffset = VALID_ETHER_LEN + ipHeaderLengthBytes;
 
     // Ensure the packet is long enough to contain the IPv4 header
     if (length < ipv4_offset + VALID_IPV4_LEN) {
@@ -89,16 +97,15 @@ void PacketParser::parse_ipv4(const std::vector<char>& data, size_t length, Pack
     }
 
     const char* ipv4_ptr = data.data() + ipv4_offset;
-
-    // Parse the IPv4 header fields
+    
     packet.ipv4Header.version_ihl     = static_cast<uint8_t>(ipv4_ptr[0]);
     packet.ipv4Header.tos             = static_cast<uint8_t>(ipv4_ptr[1]);
-    packet.ipv4Header.total_length    = (ipv4_ptr[2] << 8) | ipv4_ptr[3];
-    packet.ipv4Header.identification  = (ipv4_ptr[4] << 8) | ipv4_ptr[5];
-    packet.ipv4Header.flags_fragment  = (ipv4_ptr[6] << 8) | ipv4_ptr[7];
+    packet.ipv4Header.total_length    = ntohs(*reinterpret_cast<const uint16_t*>(ipv4_ptr + 2));
+    packet.ipv4Header.identification  = ntohs(*reinterpret_cast<const uint16_t*>(ipv4_ptr + 4));
+    packet.ipv4Header.flags_fragment  = ntohs(*reinterpret_cast<const uint16_t*>(ipv4_ptr + 6));
     packet.ipv4Header.ttl             = static_cast<uint8_t>(ipv4_ptr[8]);
     packet.ipv4Header.protocol        = static_cast<uint8_t>(ipv4_ptr[9]);
-    packet.ipv4Header.header_checksum = (ipv4_ptr[10] << 8) | ipv4_ptr[11];
+    packet.ipv4Header.header_checksum = ntohs(*reinterpret_cast<const uint16_t*>(ipv4_ptr + 10));
 
     // Copy the source and destination IP addresses
     std::copy(ipv4_ptr + 12, ipv4_ptr + 16, reinterpret_cast<char*>(&packet.ipv4Header.src_ip));
@@ -108,7 +115,7 @@ void PacketParser::parse_ipv4(const std::vector<char>& data, size_t length, Pack
     packet.OriginalIpHeader = packet.ipv4Header;
     packet.ip_protocol = get_ip_protocol(packet.ipv4Header.protocol);
 
-    std::cout << "Detected Protocol: " << static_cast<uint8_t>(packet.ip_protocol) << std::endl;
+    std::cout << "Detected Protocol: " << static_cast<uint16_t>(packet.ip_protocol) << std::endl; // Cast to uint16_t for cleaner printing
 }
 
 void PacketParser::parse_ipv6(const std::vector<char>& data, size_t length, Packet& packet) {
@@ -125,7 +132,7 @@ void PacketParser::parse_ipv6(const std::vector<char>& data, size_t length, Pack
     packet.ipv6Header.version         = (ipv6_ptr[0] >> 4) & 0x0F;
     packet.ipv6Header.traffic_class   = ((ipv6_ptr[0] & 0x0F) << 4) | ((ipv6_ptr[1] >> 4) & 0x0F);
     packet.ipv6Header.flow_label      = ((ipv6_ptr[1] & 0x0F) << 16) | (ipv6_ptr[2] << 8) | ipv6_ptr[3];
-    packet.ipv6Header.payload_length  = (ipv6_ptr[4] << 8) | ipv6_ptr[5];
+    packet.ipv6Header.payload_length = ntohs(reinterpret_cast<const uint16_t*>(ipv6_ptr + 4)[0]); // Extract payload length from bytes 4-5
 
     // Handle extension headers if present
     const char* copyOffset = ipv6_ptr + VALID_IPV6_LEN;
@@ -165,13 +172,13 @@ void PacketParser::parse_ipv6(const std::vector<char>& data, size_t length, Pack
     // Store the original IP header and determine the IP protocol
     packet.OriginalIpHeader = packet.ipv6Header;
     packet.ip_protocol = get_ip_protocol(packet.ipv6Header.next_header);
-
+    packet.ipv6HeaderEndOffset = currLength;
     std::cout << "Detected Protocol: " << static_cast<uint8_t>(packet.ip_protocol) << std::endl;
 }
 
 void PacketParser::parse_tcp(const std::vector<char>& data, size_t length, Packet& packet) {
     // Determine the offset for the TCP header based on the EtherType
-    size_t tcp_offset = (packet.ethFrame.ethertype == Packet::EtherType::IPv4) ? VALID_ETHER_LEN + VALID_IPV4_LEN : VALID_ETHER_LEN + VALID_IPV6_LEN;
+    size_t tcp_offset = (packet.ethFrame.ethertype == Packet::EtherType::IPv4) ? packet.ipv4HeaderEndOffset : packet.ipv6HeaderEndOffset;
 
     // Ensure the packet is long enough to contain the TCP header
     if(length < tcp_offset + VALID_TCP_LEN) {
@@ -181,20 +188,84 @@ void PacketParser::parse_tcp(const std::vector<char>& data, size_t length, Packe
     const char* tcp_ptr = data.data() + tcp_offset;
 
     // Parse the TCP header fields
-    packet.tcpHeader.srcPort = (tcp_ptr[0] << 8) | tcp_ptr[1];
-    packet.tcpHeader.destPort = (tcp_ptr[2] << 8) | tcp_ptr[3];
-    packet.tcpHeader.seqNum = (tcp_ptr[4] << 24) | (tcp_ptr[5] << 16) | (tcp_ptr[6] << 8) | tcp_ptr[7];
-    packet.tcpHeader.ackNum = (tcp_ptr[8] << 24) | (tcp_ptr[9] << 16) | (tcp_ptr[10] << 8) | tcp_ptr[11];
-    packet.tcpHeader.dataOffset = (tcp_ptr[12] >> 4) & 0x0F;
+    packet.tcpHeader.srcPort = ntohs(reinterpret_cast<const uint16_t*>(tcp_ptr)[0]);
+    packet.tcpHeader.destPort = ntohs(reinterpret_cast<const uint16_t*>(tcp_ptr+2)[0]);
+    packet.tcpHeader.seqNum = ntohl(reinterpret_cast<const uint32_t*>(tcp_ptr+4)[0]);
+    packet.tcpHeader.ackNum = ntohl(reinterpret_cast<const uint32_t*>(tcp_ptr+8)[0]);
+    packet.tcpHeader.dataOffset = (tcp_ptr[12] >> 4) & 0x0F;                            // Data offset field tells us where the payload actually starts
     packet.tcpHeader.flags = tcp_ptr[13];
-    packet.tcpHeader.windowSize = (tcp_ptr[14] << 8) | tcp_ptr[15];
-    packet.tcpHeader.checksum = (tcp_ptr[16] << 8) | tcp_ptr[17];
-    packet.tcpHeader.urgentPointer = (tcp_ptr[18] << 8) | tcp_ptr[19];
+    packet.tcpHeader.windowSize = ntohs(reinterpret_cast<const uint16_t*>(tcp_ptr+14)[0]);
+    packet.tcpHeader.checksum = ntohs(reinterpret_cast<const uint16_t*>(tcp_ptr+16)[0]);    
+    packet.tcpHeader.urgentPointer = ntohs(reinterpret_cast<const uint16_t*>(tcp_ptr+18)[0]);
+
+    if(packet.tcpHeader.dataOffset*4 < VALID_TCP_LEN) throw std::runtime_error("Invalid TCP header length");
+
+    size_t tcpHeaderLengthBytes = packet.tcpHeader.dataOffset * 4;
+    size_t payloadOffset =  tcp_offset + packet.tcpHeader.dataOffset*4;
+
+    size_t ipTotalLength; // Includes IP Header + (TCP Header + TCP Payload)
+    size_t ipHeaderLength; // Just the IP Header length
+
+    if (packet.ethFrame.ethertype == Packet::EtherType::IPv4) {
+        // Use ntohs for network-to-host short conversion!
+        ipTotalLength = ntohs(packet.ipv4Header.total_length);
+        ipHeaderLength = (packet.ipv4Header.version_ihl & 0x0F) * 4;
+    } else { // IPv6
+        // payload_length is *just* the payload after the base 40-byte header
+        // Total length from IP start = base header + extensions + L4 = 40 + payload_length
+        ipTotalLength = VALID_IPV6_LEN + ntohs(packet.ipv6Header.payload_length);
+        // The effective IP header length *including extensions* is needed
+        // We calculated the end offset, so length = end_offset - eth_len
+        ipHeaderLength = packet.ipv6HeaderEndOffset - VALID_ETHER_LEN;
+    }   
+    
+    if (ipTotalLength < ipHeaderLength + VALID_TCP_LEN) {
+        throw std::runtime_error("Inconsistent IP total length for TCP packet");
+    }
+    // Total header size before TCP payload = IP header length + TCP header length
+    size_t totalHeadersLength = ipHeaderLength + tcpHeaderLengthBytes;
+    size_t expectedPayloadLength = ipTotalLength - totalHeadersLength;
+    
+    size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+    packet.payloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+    // Check if ipTotalLength makes sense (at least IP header + min TCP header)
+
+    packet.payload = std::vector<char>(data.begin() + payloadOffset, data.begin() + payloadOffset + packet.payloadLength);
+}
+
+void PacketParser::parse_payload(const std::vector<char>& data, size_t length, Packet& packet)
+{
+    if(packet.ip_protocol == Packet::IpProtocol::TCP)
+    {
+        if(packet.tcpHeader.destPort == 80 || packet.tcpHeader.srcPort == 80)
+        {
+            if(packet.payloadLength == 0) throw std::runtime_error("Insufficient length for http packet");
+            parse_http(data,length,packet);
+        }
+    }
+    else if(packet.ip_protocol == Packet::IpProtocol::UDP)
+    {
+        if(packet.udpHeader.destPort == 53 || packet.udpHeader.srcPort == 53)
+        {
+            parse_dns(data,length,packet);
+        }   
+    }
+}
+
+void PacketParser::parse_http(const std::vector<char>& data, size_t length, Packet& packet)
+{
+    std::string raw_http_data(packet.payload.begin(),packet.payload.end());
+}
+
+void PacketParser::parse_dns(const std::vector<char>& data, size_t length, Packet& packet)
+{
+
 }
 
 void PacketParser::parse_udp(const std::vector<char>& data, size_t length, Packet& packet) {
     // Determine the offset for the UDP header based on the EtherType
-    size_t udp_offset = (packet.ethFrame.ethertype == Packet::EtherType::IPv4) ? VALID_ETHER_LEN + VALID_IPV4_LEN : VALID_ETHER_LEN + VALID_IPV6_LEN;
+    size_t udp_offset = (packet.ethFrame.ethertype == Packet::EtherType::IPv4) ? packet.ipv4HeaderEndOffset : packet.ipv6HeaderEndOffset;
 
     // Ensure the packet is long enough to contain the UDP header
     if(length < udp_offset + VALID_UDP_LEN) {
@@ -204,212 +275,377 @@ void PacketParser::parse_udp(const std::vector<char>& data, size_t length, Packe
     const char* udp_ptr = data.data() + udp_offset;
 
     // Parse the UDP header fields
-    packet.udpHeader.srcPort = (udp_ptr[0] << 8) | udp_ptr[1];
-    packet.udpHeader.destPort = (udp_ptr[2] << 8) | udp_ptr[3];
-    packet.udpHeader.length = (udp_ptr[4] << 8) | udp_ptr[5];
-    packet.udpHeader.checksum = (udp_ptr[6] << 8) | udp_ptr[7];
+    packet.udpHeader.srcPort = ntohs(reinterpret_cast<const uint16_t*>(udp_ptr)[0]);
+    packet.udpHeader.destPort = ntohs(reinterpret_cast<const uint16_t*>(udp_ptr+2)[0]);
+    packet.udpHeader.length = ntohs(reinterpret_cast<const uint16_t*>(udp_ptr+4)[0]);
+    packet.udpHeader.checksum = ntohs(reinterpret_cast<const uint16_t*>(udp_ptr+6)[0]);
+
+    size_t payloadOffset = udp_offset + VALID_UDP_LEN;
+
+    uint16_t udpTotalLength = ntohs(packet.udpHeader.length);
+
+    // Sanity check: Must be at least the header size
+    if (udpTotalLength < VALID_UDP_LEN) {
+        throw std::runtime_error("Invalid UDP length field (too small)");
+    }
+    size_t expectedPayloadLength = static_cast<size_t>(udpTotalLength) - VALID_UDP_LEN;
+    size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+
+    packet.payloadLength = std::min(expectedPayloadLength, availableDataLength);
+    packet.payload = std::vector<char>(data.begin() + payloadOffset, data.begin() + payloadOffset + packet.payloadLength);
 }
 
 void PacketParser::parse_icmpv4(const std::vector<char>& data, size_t length, Packet& packet) {
-    size_t icmp_offset = VALID_ETHER_LEN + VALID_IPV4_LEN;
+    size_t icmp_offset = packet.ipv4HeaderEndOffset;
 
-    // Ensure the packet is long enough to contain the ICMP header
-    if(length < icmp_offset + VALID_ICMP_LEN) {
-        throw std::runtime_error("Invalid ICMP packet length");
+    if (length < icmp_offset + VALID_ICMP_LEN) {
+        throw std::runtime_error("Invalid ICMPv4 packet length (too short for basic header)");
     }
 
     const char* icmp_ptr = data.data() + icmp_offset;
 
-    // Parse the ICMP header fields
     packet.icmpHeader.type = static_cast<uint8_t>(icmp_ptr[0]);
     packet.icmpHeader.code = static_cast<uint8_t>(icmp_ptr[1]);
-    packet.icmpHeader.checksum = static_cast<uint16_t>((icmp_ptr[2] << 8) | icmp_ptr[3]);
+    packet.icmpHeader.checksum = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 2));
 
-    // Handle different ICMP types
-    switch(packet.icmpHeader.type) {
-        case 0:
-        case 8: {
-            // Echo Request or Echo Reply
+    size_t ipTotalLength = 0;
+    size_t ipHeaderLength = 0;
+    if (std::holds_alternative<Packet::IPv4Header>(packet.OriginalIpHeader)) {
+         const auto& ipHdr = std::get<Packet::IPv4Header>(packet.OriginalIpHeader);
+         ipTotalLength = ntohs(ipHdr.total_length);
+         ipHeaderLength = (ipHdr.version_ihl & 0x0F) * 4;
+    } else {
+        throw std::runtime_error("Mismatched IP header type during ICMPv4 parsing");
+    }
+
+    switch (packet.icmpHeader.type) {
+        case 0: // Echo Reply
+        case 8: { // Echo Request
+            if (length < icmp_offset + 8) {
+                 throw std::runtime_error("Invalid ICMPv4 Echo packet length (too short for id/seq)");
+            }
             Packet::ICMPEcho echo = {
-                .identifier = static_cast<uint16_t>((icmp_ptr[4] << 8) | icmp_ptr[5]),
-                .sequenceNumber = static_cast<uint16_t>((icmp_ptr[6] << 8) | icmp_ptr[7])
+                .identifier = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
+                .sequenceNumber = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6))
             };
-            packet.icmpHeader.icmpData = echo;
+            packet.icmpHeader.icmpData = std::move(echo);
             break;
         }
-        case 3: {
-            // Destination Unreachable
+        case 3: { // Destination Unreachable
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv4 Dest Unreachable length (too short for unused/header)");
+            }
             Packet::ICMPDestinationUnreachable dest = {
-                .unused = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
                 .OriginalIpHeader = packet.OriginalIpHeader,
             };
-            packet.icmpHeader.icmpData = dest;
+            packet.icmpHeader.icmpData = std::move(dest);
             break;
         }
-        case 5: {
-            // Redirect
+        case 5: { // Redirect
+             if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv4 Redirect length (too short for gateway/header)");
+            }
             Packet::ICMPRedirect redirect = {
-                .gatewayAddress = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
+                .gatewayAddress = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
                 .OriginalIpHeader = packet.OriginalIpHeader,
             };
-            packet.icmpHeader.icmpData = redirect;
+            packet.icmpHeader.icmpData = std::move(redirect);
             break;
         }
-        case 11: {
-            // Time Exceeded
+        case 11: { // Time Exceeded
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv4 Time Exceeded length (too short for unused/header)");
+            }
             Packet::ICMPTimeExceeded timeExc = {
-                .unused = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
                 .OriginalIpHeader = packet.OriginalIpHeader,
             };
-            packet.icmpHeader.icmpData = timeExc;
+            packet.icmpHeader.icmpData = std::move(timeExc);
             break;
         }
-        case 13:
-        case 14: {
-            // Timestamp Request or Timestamp Reply
+        case 13: // Timestamp
+        case 14: { // Timestamp Reply
+            if (length < icmp_offset + 20) {
+                 throw std::runtime_error("Invalid ICMPv4 Timestamp length (too short for timestamps)");
+            }
             Packet::ICMPTimestamp timest = {
-                .identifier = (icmp_ptr[4] << 8) | icmp_ptr[5],
-                .sequenceNumber = (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .originateTimestamp = (icmp_ptr[8] << 24) | (icmp_ptr[9] << 16) | (icmp_ptr[10] << 8) | icmp_ptr[11],
-                .receiveTimestamp = (icmp_ptr[12] << 24) | (icmp_ptr[13] << 16) | (icmp_ptr[14] << 8) | icmp_ptr[15],
-                .transmitTimestamp = (icmp_ptr[16] << 24) | (icmp_ptr[17] << 16) | (icmp_ptr[18] << 8) | icmp_ptr[19]
+                .identifier = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
+                .sequenceNumber = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6)),
+                .originateTimestamp = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 8)),
+                .receiveTimestamp = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 12)),
+                .transmitTimestamp = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 16))
             };
-            packet.icmpHeader.icmpData = timest;
+            packet.icmpHeader.icmpData = std::move(timest);
             break;
         }
-        case 17:
-        case 18: {
-            // Address Mask Request or Address Mask Reply
+        case 17: // Address Mask Request
+        case 18: { // Address Mask Reply
+             if (length < icmp_offset + 12) {
+                 throw std::runtime_error("Invalid ICMPv4 Address Mask length (too short for mask)");
+            }
             Packet::ICMPAddressMask addrMask = {
-                .identifier = (icmp_ptr[4] << 8) | icmp_ptr[5],
-                .sequenceNumber = (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .addressMask = (icmp_ptr[8] << 24) | (icmp_ptr[9] << 16) | (icmp_ptr[10] << 8) | icmp_ptr[11]
+                .identifier = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
+                .sequenceNumber = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6)),
+                .addressMask = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 8))
             };
-            packet.icmpHeader.icmpData = addrMask;
+            packet.icmpHeader.icmpData = std::move(addrMask);
             break;
         }
         default: {
-            // Unsupported ICMP type
+            if (length < icmp_offset + 8) {
+                 throw std::runtime_error("Invalid ICMPv4 Generic packet length (too short for rest_of_header)");
+            }
             Packet::ICMPGeneric gen = {
-                .rest_of_header = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length),
+                .rest_of_header = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+
+            size_t totalHeadersLength = ipHeaderLength + icmpFixedPartLength;
+            size_t expectedPayloadLength = 0;
+            if (ipTotalLength >= totalHeadersLength) {
+                 expectedPayloadLength = ipTotalLength - totalHeadersLength;
+            } else {
+                 std::cerr << "Warning: IP total length (" << ipTotalLength
+                           << ") less than headers (" << totalHeadersLength
+                           << ") for ICMPv4 type " << (int)packet.icmpHeader.type << std::endl;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            gen.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                               reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
             packet.icmpHeader.icmpData = std::move(gen);
-            std::cerr << "Unsupported or unhandled ICMP type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
+            std::cerr << "Parsed unknown/unhandled ICMPv4 type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
             break;
         }
     }
 }
 
 void PacketParser::parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet) {
-    size_t icmp_offset = VALID_ETHER_LEN + VALID_IPV6_LEN;
+    size_t icmp_offset = packet.ipv6HeaderEndOffset;
 
-    // Ensure the packet is long enough to contain the ICMPv6 header
-    if(length < icmp_offset + VALID_ICMP_LEN) {
-        throw std::runtime_error("Invalid ICMPv6 packet length");
+    if (length < icmp_offset + VALID_ICMP_LEN) {
+        throw std::runtime_error("Invalid ICMPv6 packet length (too short for basic header)");
     }
 
     const char* icmp_ptr = data.data() + icmp_offset;
 
-    // Parse the ICMPv6 header fields
     packet.icmpHeader.type = static_cast<uint8_t>(icmp_ptr[0]);
     packet.icmpHeader.code = static_cast<uint8_t>(icmp_ptr[1]);
-    packet.icmpHeader.checksum = static_cast<uint16_t>((icmp_ptr[2] << 8) | icmp_ptr[3]);
+    packet.icmpHeader.checksum = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 2));
 
-    // Handle different ICMPv6 types
-    switch(packet.icmpHeader.type) {
-        case 128:
-        case 129: {
-            // Echo Request or Echo Reply
+    size_t ipPayloadLength = 0;
+    size_t ipHeaderLength = 0;
+
+    if (std::holds_alternative<Packet::IPv6Header>(packet.OriginalIpHeader)) {
+         const auto& ipHdr = std::get<Packet::IPv6Header>(packet.OriginalIpHeader);
+         ipPayloadLength = ntohs(ipHdr.payload_length);
+         ipHeaderLength = packet.ipv6HeaderEndOffset - VALID_ETHER_LEN;
+    } else {
+        throw std::runtime_error("Mismatched IP header type during ICMPv6 parsing");
+    }
+
+    switch (packet.icmpHeader.type) {
+        case 128: // Echo Request
+        case 129: { // Echo Reply
+             if (length < icmp_offset + 8) {
+                 throw std::runtime_error("Invalid ICMPv6 Echo packet length (too short for id/seq)");
+            }
             Packet::ICMPv6Echo echo = {
-                .id = (icmp_ptr[4] << 8) | icmp_ptr[5],
-                .sequence_num = (icmp_ptr[6] << 8) | icmp_ptr[7]
+                .id = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
+                .sequence_num = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6))
             };
-            packet.icmpHeader.icmpData = echo;
+            packet.icmpHeader.icmpData = std::move(echo);
             break;
         }
-        case 1: {
-            // Destination Unreachable
+
+        case 1: { // Destination Unreachable
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Dest Unreachable length (too short for unused)");
+            }
             Packet::ICMPv6DestUnreachable dest = {
-                .unused = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length)
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
-            packet.icmpHeader.icmpData = dest;
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+             if (totalICMPMessageLength >= icmpFixedPartLength) {
+                 expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+             }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            dest.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(dest);
             break;
         }
-        case 2: {
-            // Packet Too Big
-            Packet::ICMPv6PacketTooBig tooBig = {
-                .mtu = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length)
+        case 2: { // Packet Too Big
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Packet Too Big length (too short for MTU)");
+            }
+             Packet::ICMPv6PacketTooBig tooBig = {
+                .mtu = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
-            packet.icmpHeader.icmpData = tooBig;
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            tooBig.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                  reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(tooBig);
             break;
         }
-        case 3: {
-            // Time Exceeded
+        case 3: { // Time Exceeded
+             if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Time Exceeded length (too short for unused)");
+            }
             Packet::ICMPv6TimeExceeded timeExc = {
-                .unused = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length)
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
-            packet.icmpHeader.icmpData = timeExc;
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            timeExc.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                   reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(timeExc);
             break;
         }
-        case 4: {
-            // Parameter Problem
+        case 4: { // Parameter Problem
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Parameter Problem length (too short for pointer)");
+            }
             Packet::ICMPv6ParamProblem paramProb = {
-                .pointer = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length)
+                 .pointer = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
-            packet.icmpHeader.icmpData = paramProb;
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+             if (totalICMPMessageLength >= icmpFixedPartLength) {
+                 expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+             }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            paramProb.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                     reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(paramProb);
             break;
         }
-        case 133: {
-            // Router Solicitation
+        case 133: { // Router Solicitation
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Router Solicitation length");
+            }
             Packet::ICMPv6RouterSolicit routerSolicit = {
-                .reserved = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7]
+                .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
             };
-            packet.icmpHeader.icmpData = routerSolicit;
+            packet.icmpHeader.icmpData = std::move(routerSolicit);
             break;
         }
-        case 134: {
-            // Router Advertisement
+         case 134: { // Router Advertisement
+            if (length < icmp_offset + 16) {
+                throw std::runtime_error("Invalid ICMPv6 Router Advertisement length");
+            }
             Packet::ICMPv6RouterAdvert routerAdv = {
                 .hop_limit = static_cast<uint8_t>(icmp_ptr[4]),
                 .flags = static_cast<uint8_t>(icmp_ptr[5]),
-                .router_lifetime = (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .reachable_time = (icmp_ptr[8] << 24) | (icmp_ptr[9] << 16) | (icmp_ptr[10] << 8) | icmp_ptr[11],
-                .retransmit_time = (icmp_ptr[12] << 24) | (icmp_ptr[13] << 16) | (icmp_ptr[14] << 8) | icmp_ptr[15]
+                .router_lifetime = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6)),
+                .reachable_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 8)),
+                .retransmit_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 12))
             };
-            packet.icmpHeader.icmpData = routerAdv;
+            packet.icmpHeader.icmpData = std::move(routerAdv);
             break;
         }
-        case 135: {
-            // Neighbor Solicitation
+        case 135: { // Neighbor Solicitation
+             if (length < icmp_offset + 24) {
+                throw std::runtime_error("Invalid ICMPv6 Neighbor Solicitation length");
+            }
             Packet::ICMPv6NeighborSolicit neighborSolicit = {
-                .reserved = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7]
+                .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
             };
             std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborSolicit.target_addr.begin());
-            packet.icmpHeader.icmpData = neighborSolicit;
+            packet.icmpHeader.icmpData = std::move(neighborSolicit);
             break;
         }
-        case 136: {
-            // Neighbor Advertisement
+        case 136: { // Neighbor Advertisement
+            if (length < icmp_offset + 24) {
+                throw std::runtime_error("Invalid ICMPv6 Neighbor Advertisement length");
+            }
             Packet::ICMPv6NeighborAdvert neighborAdv = {
-                .flags = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7]
+                .flags = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
             };
             std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborAdv.target_addr.begin());
-            packet.icmpHeader.icmpData = neighborAdv;
+            packet.icmpHeader.icmpData = std::move(neighborAdv);
             break;
         }
         default: {
-            // Unsupported ICMPv6 type
-            Packet::ICMPGeneric gen = {
-                .rest_of_header = (icmp_ptr[4] << 24) | (icmp_ptr[5] << 16) | (icmp_ptr[6] << 8) | icmp_ptr[7],
-                .payload = std::vector<uint8_t>(icmp_ptr + 8, icmp_ptr + length)
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Generic packet length (too short for rest)");
+            }
+            Packet::ICMPv6Generic gen = {
+                .rest = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
             };
-            packet.icmpHeader.icmpData = gen;
-            std::cerr << "Unsupported or unhandled ICMPv6 type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            gen.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                               reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(gen);
+            std::cerr << "Parsed unknown/unhandled ICMPv6 type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
             break;
         }
     }

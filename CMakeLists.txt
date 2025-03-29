@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(Sniffer)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Source files
@@ -10,6 +10,7 @@ set(SOURCES
     src/socket_manager.cpp
     src/packet_parser.cpp
     src/packet_structure.cpp
+    src/http_parser.cpp
 )
 
 # Include directories

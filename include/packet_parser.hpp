@@ -9,8 +9,12 @@
 #include <set>
 #include <unordered_set>
 #include "packet_structure.hpp"
+#include "http_parser.hpp"
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <arpa/inet.h>  // For htons, htonl, ntohs, ntohl
+
 
 class PacketParser {
 public:
@@ -74,12 +78,24 @@ private:
     // Parses the ICMP header and updates the Packet object
     static void parse_icmpv4(const std::vector<char>& data, size_t length, Packet& packet);
     static void parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet);
+    
+    // Parses the HTTP header and updates the Packet object
+    static void parse_http(const std::vector<char>& data, size_t length, Packet& packet);
+
+    // Parses the DNS header and updates the Packet object
+    static void parse_dns(const std::vector<char>& data, size_t length, Packet& packet);
 
     // Maps a raw IP protocol value to the Packet::IpProtocol enum
     static Packet::IpProtocol get_ip_protocol(const uint8_t& protocol);
 
     // Parses the ICMPv6 header and updates the Packet object
     static bool is_extension_header(const uint8_t& header);
+
+    // Parses the tcp, udp payload and updates the Packet object
+    static void parse_payload(const std::vector<char>& data, size_t length, Packet& packet);
+
+    // Parses the transport layer headers (TCP/UDP/ICMP) and updates the Packet object
+    static void parse_transport_layer_headers(const std::vector<char>& data, size_t length, Packet& packet);
 
 };
 
