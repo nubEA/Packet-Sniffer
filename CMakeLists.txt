@@ -11,6 +11,7 @@ set(SOURCES
     src/packet_parser.cpp
     src/packet_structure.cpp
     src/http_parser.cpp
+    src/packet_printer.cpp
 )
 
 # Include directories

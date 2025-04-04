@@ -232,35 +232,13 @@ void PacketParser::parse_tcp(const std::vector<char>& data, size_t length, Packe
     // Check if ipTotalLength makes sense (at least IP header + min TCP header)
 
     packet.payload = std::vector<char>(data.begin() + payloadOffset, data.begin() + payloadOffset + packet.payloadLength);
-}
-
-void PacketParser::parse_payload(const std::vector<char>& data, size_t length, Packet& packet)
-{
-    if(packet.ip_protocol == Packet::IpProtocol::TCP)
+    
+    if((packet.tcpHeader.srcPort == 80 || packet.tcpHeader.destPort == 80) && HttpParser::is_likely_http_payload(packet.payload))
     {
-        if(packet.tcpHeader.destPort == 80 || packet.tcpHeader.srcPort == 80)
-        {
-            if(packet.payloadLength == 0) throw std::runtime_error("Insufficient length for http packet");
-            parse_http(data,length,packet);
-        }
+        if(packet.payload.empty()) throw std::runtime_error("Empty HTTP payload");
+
+        packet.httpData = HttpParser::parse_http(packet.payload);
     }
-    else if(packet.ip_protocol == Packet::IpProtocol::UDP)
-    {
-        if(packet.udpHeader.destPort == 53 || packet.udpHeader.srcPort == 53)
-        {
-            parse_dns(data,length,packet);
-        }   
-    }
-}
-
-void PacketParser::parse_http(const std::vector<char>& data, size_t length, Packet& packet)
-{
-    std::string raw_http_data(packet.payload.begin(),packet.payload.end());
-}
-
-void PacketParser::parse_dns(const std::vector<char>& data, size_t length, Packet& packet)
-{
-
 }
 
 void PacketParser::parse_udp(const std::vector<char>& data, size_t length, Packet& packet) {

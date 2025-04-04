@@ -2,6 +2,7 @@
 #include "socket_manager.hpp"
 #include "packet_parser.hpp"
 #include "packet_structure.hpp"
+#include "http_parser.hpp"
 
 int main(int argc, char* argv[]){
     
@@ -15,18 +16,30 @@ int main(int argc, char* argv[]){
         if(argc > 2) protocol = argv[2];
         if(argc > 3) portFilter = std::stoi(argv[3]);
     }
-
-    SocketManager manager(interface);
-
-    std::vector<char> buffer(64*1024);
-    size_t size = sizeof(buffer);
-
-    while(true){
-        int bytesReceived = manager.capture_packet(buffer,size);
-        if(bytesReceived > 0)
-        {
-            Packet packet = PacketParser::parse_packet(buffer,bytesReceived);
-        }
-
-    }   
+    
+    try
+    {
+        SocketManager manager(interface);
+        std::vector<char> buffer(64*1024);
+        size_t size = buffer.size();
+        
+        while(true){
+            int bytesReceived = manager.capture_packet(buffer,size);
+            if(bytesReceived > 0)
+            {
+                try
+                {
+                    Packet packet = PacketParser::parse_packet(buffer,bytesReceived);
+                }
+                catch(const std::exception& e)
+                {
+                    std::cerr << e.what() << '\n';
+                }
+            }
+        }        
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+    }
 }

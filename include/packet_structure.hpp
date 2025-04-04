@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <stdint.h>
 #include <variant>
+#include "http_parser.hpp"
 
 class Packet{
     public:
@@ -247,6 +248,8 @@ class Packet{
         struct UDPHeader udpHeader{};
         struct ICMPHeader icmpHeader{};
         
+        std::optional<HttpParser::HTTPMessage> httpData;
+
         IpProtocol ip_protocol{IpProtocol::UNKNOWN};
 
         std::vector<char> payload;

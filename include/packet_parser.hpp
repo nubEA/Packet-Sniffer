@@ -78,9 +78,6 @@ private:
     // Parses the ICMP header and updates the Packet object
     static void parse_icmpv4(const std::vector<char>& data, size_t length, Packet& packet);
     static void parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet);
-    
-    // Parses the HTTP header and updates the Packet object
-    static void parse_http(const std::vector<char>& data, size_t length, Packet& packet);
 
     // Parses the DNS header and updates the Packet object
     static void parse_dns(const std::vector<char>& data, size_t length, Packet& packet);
@@ -91,7 +88,7 @@ private:
     // Parses the ICMPv6 header and updates the Packet object
     static bool is_extension_header(const uint8_t& header);
 
-    // Parses the tcp, udp payload and updates the Packet object
+    // If I want to expan payload parsing in the future
     static void parse_payload(const std::vector<char>& data, size_t length, Packet& packet);
 
     // Parses the transport layer headers (TCP/UDP/ICMP) and updates the Packet object
