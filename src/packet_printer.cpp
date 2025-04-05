@@ -3,9 +3,6 @@
 #include <iomanip>
 #include <cctype>   // for isprint()
 
-// No per-header separator is used now.
-// Only two separators will be printed at the end of the entire packet output.
-
 std::string PacketPrinter::ether_type_to_string(const Packet& packet) {
     switch (packet.ethFrame.ethertype) {
         case Packet::EtherType::IPv4: return "IPv4";
@@ -33,7 +30,6 @@ std::string PacketPrinter::ip_protocol_to_string(const Packet& packet) {
 }
 
 void PacketPrinter::print_packet(const Packet& packet) {   
-    // Packet captured header
     std::cout << LABEL << BOLD << "\t\t\t[ Packet Captured ]" 
               << RESET << std::endl << std::endl;
     
@@ -56,7 +52,6 @@ void PacketPrinter::print_packet(const Packet& packet) {
             break;
     }   
 
-    // Print two back-to-back separators at the end of the packet
     std::cout << LABEL << "----------------------------------------------------------" 
               << RESET << std::endl;
     std::cout << LABEL << "----------------------------------------------------------" 
@@ -101,11 +96,11 @@ void PacketPrinter::print_ipv4(const Packet& packet) {
     uint8_t version = packet.ipv4Header.version_ihl >> 4;
     uint8_t ihl = packet.ipv4Header.version_ihl & 0x0F;
     uint8_t tos = packet.ipv4Header.tos;
-    uint16_t total_length = ntohs(packet.ipv4Header.total_length);
-    uint16_t identification = ntohs(packet.ipv4Header.identification);
-    uint16_t flags_fragment = ntohs(packet.ipv4Header.flags_fragment);
+    uint16_t total_length = packet.ipv4Header.total_length;
+    uint16_t identification = packet.ipv4Header.identification;
+    uint16_t flags_fragment = packet.ipv4Header.flags_fragment;
     uint8_t ttl = packet.ipv4Header.ttl;
-    uint16_t header_checksum = ntohs(packet.ipv4Header.header_checksum);
+    uint16_t header_checksum = packet.ipv4Header.header_checksum;
 
     std::cout << LABEL << BOLD << "IPv4 Header:" << RESET << std::endl;
     std::cout << COLOR_IPV4 << BOLD << "  Source IP           : " << RESET << srcIP << std::endl;
@@ -127,8 +122,8 @@ void PacketPrinter::print_ipv6(const Packet& packet) {
     std::string ipProtocolStr = ip_protocol_to_string(packet);
     uint8_t version = packet.ipv6Header.version;
     uint8_t traffic_class = packet.ipv6Header.traffic_class;
-    uint32_t flow_label = ntohl(packet.ipv6Header.flow_label);
-    uint16_t payload_length = ntohs(packet.ipv6Header.payload_length);
+    uint32_t flow_label = packet.ipv6Header.flow_label;
+    uint16_t payload_length = packet.ipv6Header.payload_length;
     uint8_t next_header = packet.ipv6Header.next_header;
     uint8_t hop_limit = packet.ipv6Header.hop_limit;
 
@@ -145,10 +140,10 @@ void PacketPrinter::print_ipv6(const Packet& packet) {
 }
 
 void PacketPrinter::print_udp(const Packet& packet) {
-    std::string srcPort = std::to_string(ntohs(packet.udpHeader.srcPort));
-    std::string destPort = std::to_string(ntohs(packet.udpHeader.destPort));
-    uint16_t length = ntohs(packet.udpHeader.length);
-    uint16_t checksum = ntohs(packet.udpHeader.checksum);
+    std::string srcPort = std::to_string(packet.udpHeader.srcPort);
+    std::string destPort = std::to_string(packet.udpHeader.destPort);
+    uint16_t length = packet.udpHeader.length;
+    uint16_t checksum = packet.udpHeader.checksum;
 
     std::cout << LABEL << BOLD << "UDP Header:" << RESET << std::endl;
     std::cout << COLOR_UDP << BOLD << "  Source Port     : " << RESET << srcPort << std::endl;
@@ -161,7 +156,7 @@ void PacketPrinter::print_icmp(const Packet& packet) {
     std::string icmpTypeStr;
     uint8_t type = packet.icmpHeader.type;
     uint8_t code = packet.icmpHeader.code;
-    uint16_t checksum = ntohs(packet.icmpHeader.checksum);
+    uint16_t checksum = packet.icmpHeader.checksum;
 
     if (std::holds_alternative<Packet::ICMPEcho>(packet.icmpHeader.icmpData)) {
         const auto& echo = std::get<Packet::ICMPEcho>(packet.icmpHeader.icmpData);
@@ -211,15 +206,15 @@ void PacketPrinter::print_icmp(const Packet& packet) {
 }
 
 void PacketPrinter::print_tcp(const Packet& packet) {
-    std::string srcPort = std::to_string(ntohs(packet.tcpHeader.srcPort));
-    std::string destPort = std::to_string(ntohs(packet.tcpHeader.destPort));
-    uint32_t seqNum = ntohl(packet.tcpHeader.seqNum);
-    uint32_t ackNum = ntohl(packet.tcpHeader.ackNum);
+    std::string srcPort = std::to_string(packet.tcpHeader.srcPort);
+    std::string destPort = std::to_string(packet.tcpHeader.destPort);
+    uint32_t seqNum = packet.tcpHeader.seqNum;
+    uint32_t ackNum = packet.tcpHeader.ackNum;
     uint8_t dataOffset = packet.tcpHeader.dataOffset;
     uint8_t flags = packet.tcpHeader.flags;
-    uint16_t windowSize = ntohs(packet.tcpHeader.windowSize);
-    uint16_t checksum = ntohs(packet.tcpHeader.checksum);
-    uint16_t urgentPointer = ntohs(packet.tcpHeader.urgentPointer);
+    uint16_t windowSize = packet.tcpHeader.windowSize;
+    uint16_t checksum = packet.tcpHeader.checksum;
+    uint16_t urgentPointer = packet.tcpHeader.urgentPointer;
 
     std::cout << LABEL << BOLD << "TCP Header:" << RESET << std::endl;
     std::cout << COLOR_TCP << BOLD << "  Source Port         : " << RESET << srcPort << std::endl;

@@ -13,16 +13,17 @@
 
 class Packet{
     public:
-        //Will be used to filter traffic based on the protocol that the payload is carrying
-        enum class EtherType : uint16_t {
-            IPv4 = 0x0800,   // Internet Protocol version 4
-            IPv6 = 0x86DD,   // Internet Protocol version 6
-            ARP  = 0x0806,   // Address Resolution Protocol
-            VLAN = 0x8100,   // VLAN-tagged frame
-            RARP = 0x8035,   // Reverse Address Resolution Protocol
-            UNKNOWN = 0xFFFF 
-        };
-
+    
+    //Will be used to filter traffic based on the protocol that the payload is carrying
+    enum class EtherType : uint16_t {
+        IPv4 = 0x0800,   // Internet Protocol version 4
+        IPv6 = 0x86DD,   // Internet Protocol version 6
+        ARP  = 0x0806,   // Address Resolution Protocol
+        VLAN = 0x8100,   // VLAN-tagged frame
+        RARP = 0x8035,   // Reverse Address Resolution Protocol
+        UNKNOWN = 0xFFFF 
+    };
+    
         enum class IpProtocol : uint8_t {
             //Extention Headers
             HOP_BY_HOP = 0, // Hop-by-Hop Option header
@@ -40,6 +41,13 @@ class Packet{
             NO_NEXT_HEADER = 59, // No next header
             UNKNOWN = 0xFF
         };
+
+        //Used for filtration logic
+        struct FilterConfig{
+            std::optional<IpProtocol> protocol;
+            std::optional<uint16_t> port;
+        };
+
         // Ethernet Frame Structure
         struct EthernetFrame {
             std::array<unsigned char,6> dest_mac;
