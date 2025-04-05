@@ -3,6 +3,7 @@
 #include "packet_parser.hpp"
 #include "packet_structure.hpp"
 #include "http_parser.hpp"
+#include "packet_printer.hpp"
 
 int main(int argc, char* argv[]){
     
@@ -30,6 +31,7 @@ int main(int argc, char* argv[]){
                 try
                 {
                     Packet packet = PacketParser::parse_packet(buffer,bytesReceived);
+                    PacketPrinter::print_packet(packet);
                 }
                 catch(const std::exception& e)
                 {
