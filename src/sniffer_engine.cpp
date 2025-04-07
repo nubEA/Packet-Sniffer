@@ -24,7 +24,7 @@ void SnifferEngine::start(){
 }
 
 void SnifferEngine::capture_packet(){
-    std::vector<char> buffer(1024*64);
+    std::vector<char> buffer(1024*512);
     size_t size = buffer.size();
     
     while(true)
