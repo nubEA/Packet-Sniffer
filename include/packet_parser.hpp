@@ -55,6 +55,7 @@ public:
 public:
     // Parses raw packet data and returns a Packet object
     static Packet parse_packet(const std::vector<char>& data, size_t length);
+    static bool packet_matches_filter(const Packet& packet, const Packet::FilterConfig& filter);
 
 private:
     // Parses the Ethernet header and updates the Packet object
@@ -93,7 +94,6 @@ private:
 
     // Parses the transport layer headers (TCP/UDP/ICMP) and updates the Packet object
     static void parse_transport_layer_headers(const std::vector<char>& data, size_t length, Packet& packet);
-
 };
 
 #endif // PACKET_PARSER_HPP

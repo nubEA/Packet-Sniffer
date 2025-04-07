@@ -403,261 +403,276 @@
         }
     }
 
-    void PacketParser::parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet) {
-        size_t icmp_offset = packet.ipv6HeaderEndOffset;
+void PacketParser::parse_icmpv6(const std::vector<char>& data, size_t length, Packet& packet) {
+    size_t icmp_offset = packet.ipv6HeaderEndOffset;
 
-        if (length < icmp_offset + VALID_ICMP_LEN) {
-            throw std::runtime_error("Invalid ICMPv6 packet length (too short for basic header)");
+    if (length < icmp_offset + VALID_ICMP_LEN) {
+        throw std::runtime_error("Invalid ICMPv6 packet length (too short for basic header)");
+    }
+
+    const char* icmp_ptr = data.data() + icmp_offset;
+
+    packet.icmpHeader.type = static_cast<uint8_t>(icmp_ptr[0]);
+    packet.icmpHeader.code = static_cast<uint8_t>(icmp_ptr[1]);
+    packet.icmpHeader.checksum = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 2));
+
+    size_t ipPayloadLength = 0;
+    size_t ipHeaderLength = 0;
+
+    if (std::holds_alternative<Packet::IPv6Header>(packet.OriginalIpHeader)) {
+        const auto& ipHdr = std::get<Packet::IPv6Header>(packet.OriginalIpHeader);
+        ipPayloadLength = ntohs(ipHdr.payload_length);
+        ipHeaderLength = packet.ipv6HeaderEndOffset - VALID_ETHER_LEN;
+    } else {
+        throw std::runtime_error("Mismatched IP header type during ICMPv6 parsing");
+    }
+
+    switch (packet.icmpHeader.type) {
+        case 128: // Echo Request
+        case 129: { // Echo Reply
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Echo packet length (too short for id/seq)");
+            }
+            Packet::ICMPv6Echo echo = {
+                .id = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
+                .sequence_num = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6))
+            };
+            packet.icmpHeader.icmpData = std::move(echo);
+            break;
         }
 
-        const char* icmp_ptr = data.data() + icmp_offset;
+        case 1: { // Destination Unreachable
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Dest Unreachable length (too short for unused)");
+            }
+            Packet::ICMPv6DestUnreachable dest = {
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
+            };
 
-        packet.icmpHeader.type = static_cast<uint8_t>(icmp_ptr[0]);
-        packet.icmpHeader.code = static_cast<uint8_t>(icmp_ptr[1]);
-        packet.icmpHeader.checksum = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 2));
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
 
-        size_t ipPayloadLength = 0;
-        size_t ipHeaderLength = 0;
-
-        if (std::holds_alternative<Packet::IPv6Header>(packet.OriginalIpHeader)) {
-            const auto& ipHdr = std::get<Packet::IPv6Header>(packet.OriginalIpHeader);
-            ipPayloadLength = ntohs(ipHdr.payload_length);
-            ipHeaderLength = packet.ipv6HeaderEndOffset - VALID_ETHER_LEN;
-        } else {
-            throw std::runtime_error("Mismatched IP header type during ICMPv6 parsing");
-        }
-
-        switch (packet.icmpHeader.type) {
-            case 128: // Echo Request
-            case 129: { // Echo Reply
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Echo packet length (too short for id/seq)");
-                }
-                Packet::ICMPv6Echo echo = {
-                    .id = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 4)),
-                    .sequence_num = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6))
-                };
-                packet.icmpHeader.icmpData = std::move(echo);
-                break;
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
             }
 
-            case 1: { // Destination Unreachable
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Dest Unreachable length (too short for unused)");
-                }
-                Packet::ICMPv6DestUnreachable dest = {
-                    .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
-                };
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
 
-                size_t icmpFixedPartLength = 8;
-                size_t payloadOffset = icmp_offset + icmpFixedPartLength;
-                size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
-
-                size_t expectedPayloadLength = 0;
-                if (totalICMPMessageLength >= icmpFixedPartLength) {
-                    expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
-                }
-
-                size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
-                size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
-
-                const char* payloadStartPtr = data.data() + payloadOffset;
-                dest.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
-                                    reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
-
-                packet.icmpHeader.icmpData = std::move(dest);
-                break;
-            }
-            case 2: { // Packet Too Big
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Packet Too Big length (too short for MTU)");
-                }
-                Packet::ICMPv6PacketTooBig tooBig = {
-                    .mtu = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
-                };
-
-                size_t icmpFixedPartLength = 8;
-                size_t payloadOffset = icmp_offset + icmpFixedPartLength;
-                size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
-
-                size_t expectedPayloadLength = 0;
-                if (totalICMPMessageLength >= icmpFixedPartLength) {
-                    expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
-                }
-
-                size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
-                size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
-
-                const char* payloadStartPtr = data.data() + payloadOffset;
-                tooBig.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
-                                    reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
-
-                packet.icmpHeader.icmpData = std::move(tooBig);
-                break;
-            }
-            case 3: { // Time Exceeded
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Time Exceeded length (too short for unused)");
-                }
-                Packet::ICMPv6TimeExceeded timeExc = {
-                    .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
-                };
-
-                size_t icmpFixedPartLength = 8;
-                size_t payloadOffset = icmp_offset + icmpFixedPartLength;
-                size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
-
-                size_t expectedPayloadLength = 0;
-                if (totalICMPMessageLength >= icmpFixedPartLength) {
-                    expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
-                }
-
-                size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
-                size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
-
-                const char* payloadStartPtr = data.data() + payloadOffset;
-                timeExc.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
-                                    reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
-
-                packet.icmpHeader.icmpData = std::move(timeExc);
-                break;
-            }
-            case 4: { // Parameter Problem
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Parameter Problem length (too short for pointer)");
-                }
-                Packet::ICMPv6ParamProblem paramProb = {
-                    .pointer = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
-                };
-
-                size_t icmpFixedPartLength = 8;
-                size_t payloadOffset = icmp_offset + icmpFixedPartLength;
-                size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
-
-                size_t expectedPayloadLength = 0;
-                if (totalICMPMessageLength >= icmpFixedPartLength) {
-                    expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
-                }
-
-                size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
-                size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
-
-                const char* payloadStartPtr = data.data() + payloadOffset;
-                paramProb.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
-                                        reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
-
-                packet.icmpHeader.icmpData = std::move(paramProb);
-                break;
-            }
-            case 133: { // Router Solicitation
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Router Solicitation length");
-                }
-                Packet::ICMPv6RouterSolicit routerSolicit = {
-                    .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
-                };
-                packet.icmpHeader.icmpData = std::move(routerSolicit);
-                break;
-            }
-            case 134: { // Router Advertisement
-                if (length < icmp_offset + 16) {
-                    throw std::runtime_error("Invalid ICMPv6 Router Advertisement length");
-                }
-                Packet::ICMPv6RouterAdvert routerAdv = {
-                    .hop_limit = static_cast<uint8_t>(icmp_ptr[4]),
-                    .flags = static_cast<uint8_t>(icmp_ptr[5]),
-                    .router_lifetime = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6)),
-                    .reachable_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 8)),
-                    .retransmit_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 12))
-                };
-                packet.icmpHeader.icmpData = std::move(routerAdv);
-                break;
-            }
-            case 135: { // Neighbor Solicitation
-                if (length < icmp_offset + 24) {
-                    throw std::runtime_error("Invalid ICMPv6 Neighbor Solicitation length");
-                }
-                Packet::ICMPv6NeighborSolicit neighborSolicit = {
-                    .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
-                };
-                std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborSolicit.target_addr.begin());
-                packet.icmpHeader.icmpData = std::move(neighborSolicit);
-                break;
-            }
-            case 136: { // Neighbor Advertisement
-                if (length < icmp_offset + 24) {
-                    throw std::runtime_error("Invalid ICMPv6 Neighbor Advertisement length");
-                }
-                Packet::ICMPv6NeighborAdvert neighborAdv = {
-                    .flags = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
-                };
-                std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborAdv.target_addr.begin());
-                packet.icmpHeader.icmpData = std::move(neighborAdv);
-                break;
-            }
-            default: {
-                if (length < icmp_offset + 8) {
-                    throw std::runtime_error("Invalid ICMPv6 Generic packet length (too short for rest)");
-                }
-                Packet::ICMPv6Generic gen = {
-                    .rest = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
-                };
-
-                size_t icmpFixedPartLength = 8;
-                size_t payloadOffset = icmp_offset + icmpFixedPartLength;
-                size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
-
-                size_t expectedPayloadLength = 0;
-                if (totalICMPMessageLength >= icmpFixedPartLength) {
-                    expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
-                }
-
-
-                size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
-                size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
-
-                const char* payloadStartPtr = data.data() + payloadOffset;
-                gen.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            dest.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
                                 reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
 
-                packet.icmpHeader.icmpData = std::move(gen);
-                std::cerr << "Parsed unknown/unhandled ICMPv6 type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
-                break;
+            packet.icmpHeader.icmpData = std::move(dest);
+            break;
+        }
+        case 2: { // Packet Too Big
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Packet Too Big length (too short for MTU)");
             }
+            Packet::ICMPv6PacketTooBig tooBig = {
+                .mtu = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
+            };
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            tooBig.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(tooBig);
+            break;
+        }
+        case 3: { // Time Exceeded
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Time Exceeded length (too short for unused)");
+            }
+            Packet::ICMPv6TimeExceeded timeExc = {
+                .unused = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
+            };
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            timeExc.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(timeExc);
+            break;
+        }
+        case 4: { // Parameter Problem
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Parameter Problem length (too short for pointer)");
+            }
+            Packet::ICMPv6ParamProblem paramProb = {
+                .pointer = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
+            };
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            paramProb.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                                    reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(paramProb);
+            break;
+        }
+        case 133: { // Router Solicitation
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Router Solicitation length");
+            }
+            Packet::ICMPv6RouterSolicit routerSolicit = {
+                .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
+            };
+            packet.icmpHeader.icmpData = std::move(routerSolicit);
+            break;
+        }
+        case 134: { // Router Advertisement
+            if (length < icmp_offset + 16) {
+                throw std::runtime_error("Invalid ICMPv6 Router Advertisement length");
+            }
+            Packet::ICMPv6RouterAdvert routerAdv = {
+                .hop_limit = static_cast<uint8_t>(icmp_ptr[4]),
+                .flags = static_cast<uint8_t>(icmp_ptr[5]),
+                .router_lifetime = ntohs(*reinterpret_cast<const uint16_t*>(icmp_ptr + 6)),
+                .reachable_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 8)),
+                .retransmit_time = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 12))
+            };
+            packet.icmpHeader.icmpData = std::move(routerAdv);
+            break;
+        }
+        case 135: { // Neighbor Solicitation
+            if (length < icmp_offset + 24) {
+                throw std::runtime_error("Invalid ICMPv6 Neighbor Solicitation length");
+            }
+            Packet::ICMPv6NeighborSolicit neighborSolicit = {
+                .reserved = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
+            };
+            std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborSolicit.target_addr.begin());
+            packet.icmpHeader.icmpData = std::move(neighborSolicit);
+            break;
+        }
+        case 136: { // Neighbor Advertisement
+            if (length < icmp_offset + 24) {
+                throw std::runtime_error("Invalid ICMPv6 Neighbor Advertisement length");
+            }
+            Packet::ICMPv6NeighborAdvert neighborAdv = {
+                .flags = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4))
+            };
+            std::copy(icmp_ptr + 8, icmp_ptr + 24, neighborAdv.target_addr.begin());
+            packet.icmpHeader.icmpData = std::move(neighborAdv);
+            break;
+        }
+        default: {
+            if (length < icmp_offset + 8) {
+                throw std::runtime_error("Invalid ICMPv6 Generic packet length (too short for rest)");
+            }
+            Packet::ICMPv6Generic gen = {
+                .rest = ntohl(*reinterpret_cast<const uint32_t*>(icmp_ptr + 4)),
+            };
+
+            size_t icmpFixedPartLength = 8;
+            size_t payloadOffset = icmp_offset + icmpFixedPartLength;
+            size_t totalICMPMessageLength = ipPayloadLength - (ipHeaderLength - VALID_IPV6_LEN);
+
+            size_t expectedPayloadLength = 0;
+            if (totalICMPMessageLength >= icmpFixedPartLength) {
+                expectedPayloadLength = totalICMPMessageLength - icmpFixedPartLength;
+            }
+
+
+            size_t availableDataLength = (length > payloadOffset) ? (length - payloadOffset) : 0;
+            size_t finalPayloadLength = std::min(expectedPayloadLength, availableDataLength);
+
+            const char* payloadStartPtr = data.data() + payloadOffset;
+            gen.payload.assign(reinterpret_cast<const uint8_t*>(payloadStartPtr),
+                            reinterpret_cast<const uint8_t*>(payloadStartPtr + finalPayloadLength));
+
+            packet.icmpHeader.icmpData = std::move(gen);
+            std::cerr << "Parsed unknown/unhandled ICMPv6 type: " << static_cast<uint16_t>(packet.icmpHeader.type) << std::endl;
+            break;
         }
     }
+}
 
-    Packet::IpProtocol PacketParser::get_ip_protocol(const uint8_t& protocol) {
-        // Map the protocol number to the corresponding IP protocol enum
-        switch(protocol) {
-            case 1: return Packet::IpProtocol::ICMP;
-            case 6: return Packet::IpProtocol::TCP;
-            case 17: return Packet::IpProtocol::UDP;
-            case 58: return Packet::IpProtocol::ICMPv6;
-            case 51: return Packet::IpProtocol::AH;
-            case 59: return Packet::IpProtocol::NO_NEXT_HEADER;
-            default: return Packet::IpProtocol::UNKNOWN;
+Packet::IpProtocol PacketParser::get_ip_protocol(const uint8_t& protocol) {
+    // Map the protocol number to the corresponding IP protocol enum
+    switch(protocol) {
+        case 1: return Packet::IpProtocol::ICMP;
+        case 6: return Packet::IpProtocol::TCP;
+        case 17: return Packet::IpProtocol::UDP;
+        case 58: return Packet::IpProtocol::ICMPv6;
+        case 51: return Packet::IpProtocol::AH;
+        case 59: return Packet::IpProtocol::NO_NEXT_HEADER;
+        default: return Packet::IpProtocol::UNKNOWN;
+    }
+}
+
+void PacketParser::assign_ether_type(uint16_t type, Packet::EtherType& etherType) {
+    // Map the EtherType number to the corresponding EtherType enum
+    switch (type) {
+        case 0x0800: etherType = Packet::EtherType::IPv4; break;
+        case 0x86DD: etherType = Packet::EtherType::IPv6; break;
+        case 0x0806: etherType = Packet::EtherType::ARP;  break;
+        case 0x8100: etherType = Packet::EtherType::VLAN; break;
+        case 0x8035: etherType = Packet::EtherType::RARP; break;
+        default:
+            // Log unknown EtherType for debugging purposes
+            // std::cerr << "Warning: Unknown EtherType: 0x" << std::hex << type << std::endl;
+            etherType = Packet::EtherType::UNKNOWN;
+            break;
+    }
+}
+
+bool PacketParser::is_extension_header(const uint8_t& header) {
+    // Check if the header is an extension header
+    static const std::unordered_set<uint8_t> extension_headers = {0, 43, 44, 50, 60};
+    return extension_headers.find(header) != extension_headers.end();
+}
+
+bool PacketParser::packet_matches_filter(const Packet& packet, const Packet::FilterConfig& filter) {
+    if (filter.protocol.has_value() && packet.ip_protocol != filter.protocol.value()) {
+        return false;
+    }
+    if (filter.port.has_value()) {
+        if (packet.ip_protocol == Packet::IpProtocol::TCP && packet.tcpHeader.srcPort != filter.port.value() && packet.tcpHeader.destPort != filter.port.value()) {
+            return false;
         }
+        if (packet.ip_protocol == Packet::IpProtocol::UDP && packet.udpHeader.srcPort != filter.port.value() && packet.udpHeader.destPort != filter.port.value()) {
+            return false;
+        }   
     }
-
-    void PacketParser::assign_ether_type(uint16_t type, Packet::EtherType& etherType) {
-        // Map the EtherType number to the corresponding EtherType enum
-        switch (type) {
-            case 0x0800: etherType = Packet::EtherType::IPv4; break;
-            case 0x86DD: etherType = Packet::EtherType::IPv6; break;
-            case 0x0806: etherType = Packet::EtherType::ARP;  break;
-            case 0x8100: etherType = Packet::EtherType::VLAN; break;
-            case 0x8035: etherType = Packet::EtherType::RARP; break;
-            default:
-                // Log unknown EtherType for debugging purposes
-                // std::cerr << "Warning: Unknown EtherType: 0x" << std::hex << type << std::endl;
-                etherType = Packet::EtherType::UNKNOWN;
-                break;
-        }
-    }
-
-    bool PacketParser::is_extension_header(const uint8_t& header) {
-        // Check if the header is an extension header
-        static const std::unordered_set<uint8_t> extension_headers = {0, 43, 44, 50, 60};
-        return extension_headers.find(header) != extension_headers.end();
-    }
+    return true;
+}

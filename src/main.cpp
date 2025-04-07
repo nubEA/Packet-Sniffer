@@ -1,9 +1,55 @@
 #include <iostream>
+#include <csignal>
+#include <chrono>
 #include "socket_manager.hpp"
 #include "packet_parser.hpp"
 #include "packet_structure.hpp"
 #include "http_parser.hpp"
 #include "packet_printer.hpp"   
+#include "sniffer_engine.hpp"
+
+//Learn about futex, and interanal implementation of std::mutex, cv, locks when revisiting this project
+
+void argument_parsing(int argc, char* argv[], std::string& interface, Packet::FilterConfig& filter);
+void print_correct_cli_format();
+
+std::atomic<bool> endProcess{false};
+
+void signal_handler(int signum)
+{
+    if(signum == SIGINT) endProcess.store(true);
+}
+
+int main(int argc, char* argv[]){
+    
+    //wlp0s20f3
+    std::string interface{};
+    Packet::FilterConfig filter;
+
+    argument_parsing(argc,argv,interface,filter);
+
+    std::signal(SIGINT, signal_handler);
+    try
+    {
+        SocketManager manager(interface);
+
+        SnifferEngine engine(manager,filter);       
+        
+        std::cout << "Starting the packet sniffer. Press Ctrl + C to exit\n";
+
+        engine.start();
+        while(!endProcess.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        engine.stop();
+        std::cout << "\nSniffer stopped sniffing!\n";
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+    }
+}
 
 void print_correct_cli_format() {
     std::cout << "Usage: "
@@ -28,37 +74,18 @@ void print_correct_cli_format() {
     std::cout << "  ./sniffer eth0 -p tcp --port 80" << std::endl;
 }
 
-bool packet_matches_filter(const Packet& packet, const Packet::FilterConfig& filter) {
-    if (filter.protocol.has_value() && packet.ip_protocol != filter.protocol.value()) {
-        return false;
-    }
-    if (filter.port.has_value()) {
-        if (packet.ip_protocol == Packet::IpProtocol::TCP && packet.tcpHeader.srcPort != filter.port.value() && packet.tcpHeader.destPort != filter.port.value()) {
-            return false;
-        }
-        if (packet.ip_protocol == Packet::IpProtocol::UDP && packet.udpHeader.srcPort != filter.port.value() && packet.udpHeader.destPort != filter.port.value()) {
-            return false;
-        }   
-    }
-    return true;
-}
-
-int main(int argc, char* argv[]){
-    
-    //wlp0s20f3
-    std::string interface{};
-    Packet::FilterConfig filter;
-
+void argument_parsing(int argc, char* argv[], std::string& interface, Packet::FilterConfig& filter)
+{
     if(argc <= 1){
         print_correct_cli_format();
-        return 1;       
+        exit(1);       
     }
     else{
         interface = argv[1];
         if(interface == "-h" || interface == "--help")
         {
             print_correct_cli_format();
-            return 0;
+            exit(0);
         }
         
         for(int i = 2; i < argc; ++i)
@@ -96,14 +123,14 @@ int main(int argc, char* argv[]){
                         std::cerr << "Unknown protocol: " << protocol << std::endl;
                         std::cout << "Supported protocols: tcp, udp, icmp, icmpv6, ah, no_next_header, hop_by_hop, routing, fragment, encapsulating_security_payload, destination_options" << std::endl; 
                         print_correct_cli_format();
-                        return 1;
+                        exit(1);
                     }
                 }
                 else
                 {
                     std::cerr << "Missing protocol argument after -p" << std::endl;
                     print_correct_cli_format();
-                    return 1;
+                    exit(1);
                 }
             }
             else if(current_arg == "--port")
@@ -117,7 +144,7 @@ int main(int argc, char* argv[]){
                         {   
                             std::cerr << "Port number must be between 0 and 65535" << std::endl;
                             print_correct_cli_format();
-                            return 1;
+                            exit(1);
                         }
                     }
                     catch(const std::exception& e)
@@ -125,49 +152,22 @@ int main(int argc, char* argv[]){
                         std::cerr << e.what() << '\n';
                         std::cerr << "Invalid port number: " << argv[i] << std::endl;
                         print_correct_cli_format();
-                        return 1;
+                        exit(1);
                     }
                 }
                 else
                 {
                     std::cerr << "Missing port argument after --port" << std::endl;
                     print_correct_cli_format();
-                    return 1;
+                    exit(1);
                 }
             }
             else{
                 std::cerr << "Invalid argument: " << current_arg << std::endl;
                 print_correct_cli_format();
-                return 1;
+                exit(1);
             }
         }
     }
 
-    try
-    {
-        SocketManager manager(interface);
-        std::vector<char> buffer(64*1024);
-        size_t size = buffer.size();
-        
-        while(true){
-            int bytesReceived = manager.capture_packet(buffer,size);
-            if(bytesReceived > 0)
-            {
-                try
-                {
-                    Packet packet = PacketParser::parse_packet(buffer,bytesReceived);
-
-                    if(packet_matches_filter(packet,filter)) PacketPrinter::print_packet(packet);
-                }
-                catch(const std::exception& e)
-                {
-                    std::cerr << e.what() << '\n';
-                }
-            }
-        }        
-    }
-    catch(const std::exception& e)
-    {
-        std::cerr << e.what() << '\n';
-    }
 }
