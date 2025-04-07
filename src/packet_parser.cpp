@@ -231,7 +231,6 @@ void PacketParser::parse_tcp(const std::vector<char>& data, size_t length, Packe
     
     if((packet.tcpHeader.srcPort == 80 || packet.tcpHeader.destPort == 80) && HttpParser::is_likely_http_payload(packet.payload))
     {
-        std::cout << "###################################\n";
         if(packet.payload.empty()) throw std::runtime_error("Empty HTTP payload");
 
         packet.httpData = HttpParser::parse_http(packet.payload);
